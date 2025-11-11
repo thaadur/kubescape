@@ -1,5 +1,5 @@
 # ==========================================================
-#  SecureCloud - Kubescape (KSPM) Unified Image
+#  SecureCloud - Kubescape + AWS CLI Unified Image
 #  Maintained by: lokeshtk / SecureCloud_PWN
 #  Source: https://github.com/thaadur/kubescape.git
 # ==========================================================
@@ -8,56 +8,70 @@ FROM ubuntu:22.04
 
 LABEL maintainer="SecureCloud <SecureCloud_PWN>"
 LABEL org.opencontainers.image.source="https://github.com/thaadur/kubescape"
-LABEL description="SecureCloud Kubescape KSPM Scanner"
+LABEL description="SecureCloud Kubescape + AWS CLI Image (EKS-ready)"
 
-ARG GIT_USER=thaadur
-ARG GIT_TOKEN
+ARG KUBESCAPE_VERSION=3.0.8
+ARG POWERSHELL_VERSION=7.5.0
 
 # ----------------------------------------------------------
 # Install base dependencies
 # ----------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl wget git unzip ca-certificates gnupg jq && \
+    curl wget unzip ca-certificates jq git gnupg apt-transport-https \
+    software-properties-common lsb-release && \
     rm -rf /var/lib/apt/lists/*
 
 # ----------------------------------------------------------
-# Create working directory
+# Install AWS CLI v2
 # ----------------------------------------------------------
-WORKDIR /opt/kubescape
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip" && \
+    unzip /tmp/awscliv2.zip -d /tmp && \
+    /tmp/aws/install && \
+    ln -sf /usr/local/bin/aws /usr/bin/aws && \
+    rm -rf /tmp/aws /tmp/awscliv2.zip && \
+    aws --version
 
 # ----------------------------------------------------------
-# Clone Kubescape source (from private GitHub repo)
+# Install Kubescape
 # ----------------------------------------------------------
-# To build with private access:
-# docker build --build-arg GIT_TOKEN=<your_token> -t lokeshtk/kubescape:latest -f Dockerfile.kubescape .
-RUN if [ -n "$GIT_TOKEN" ]; then \
-      git clone https://${GIT_USER}:${GIT_TOKEN}@github.com/${GIT_USER}/kubescape.git /opt/kubescape; \
-    else \
-      git clone https://github.com/${GIT_USER}/kubescape.git /opt/kubescape; \
-    fi
-
-# ----------------------------------------------------------
-# Install Kubescape binary (latest stable)
-# ----------------------------------------------------------
-RUN curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh | bash && \
+RUN curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh | /bin/bash && \
     mv /usr/local/bin/kubescape /usr/bin/kubescape && \
     kubescape version || true
 
 # ----------------------------------------------------------
-# Verify installation
+# (Optional) Install PowerShell (for parity/testing)
 # ----------------------------------------------------------
-RUN echo "✅ Kubescape Installed Successfully" && kubescape version
+RUN ARCH=$(uname -m) && \
+    wget https://github.com/PowerShell/PowerShell/releases/download/v${POWERSHELL_VERSION}/powershell-${POWERSHELL_VERSION}-linux-x64.tar.gz -O /tmp/pwsh.tar.gz && \
+    mkdir -p /opt/microsoft/powershell/7 && \
+    tar zxf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7 && \
+    chmod +x /opt/microsoft/powershell/7/pwsh && \
+    ln -s /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh && \
+    /opt/microsoft/powershell/7/pwsh --version && \
+    rm /tmp/pwsh.tar.gz
 
 # ----------------------------------------------------------
-# Add consistent non-root user
+# Add non-root user
 # ----------------------------------------------------------
-RUN addgroup --gid 1000 securecloud && \
-    adduser --uid 1000 --gid 1000 --disabled-password --gecos "" securecloud
+RUN useradd -m -s /bin/bash securecloud
 USER securecloud
 WORKDIR /home/securecloud
 
 # ----------------------------------------------------------
-# Entrypoint
+# Set up environment variables
 # ----------------------------------------------------------
-ENTRYPOINT ["kubescape"]
-CMD ["scan", "--help"]
+ENV HOME=/home/securecloud
+ENV PATH="$HOME/.local/bin:$PATH"
+
+# ----------------------------------------------------------
+# Verify AWS + Kubescape setup
+# ----------------------------------------------------------
+RUN echo "🔒 SecureCloud Kubescape Image Verification:" && \
+    aws --version && \
+    kubescape version && \
+    echo "✅ Kubescape + AWS CLI are installed and ready."
+
+# ----------------------------------------------------------
+# Default entrypoint
+# ----------------------------------------------------------
+ENTRYPOINT ["bash", "-c", "echo '🔒 SecureCloud Kubescape Ready ✅'; kubescape \"$@\"", "--"]
